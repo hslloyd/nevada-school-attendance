@@ -1,0 +1,35 @@
+---
+title: "chronic_absenteeism_nevada"
+author: "Hannah Lloyd"
+date: "`r format(Sys.time(),'%m/%d/%Y')`"
+output:  
+  html_document: 
+    theme: united 
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Install and Load Packages 
+```{r}
+# Install the required packages if not already installed. Change FALSE to TRUE if you need to install these packages.
+if (!require('tidyverse')) install.packages('tm', dependencies=FALSE)
+if (!require('readr')) install.packages('tidytext', dependencies=FALSE)
+
+library(tidyverse)
+library(readr) 
+```
+
+
+### Load datasets 
+source of the data: http://nevadareportcard.nv.gov/di/  
+Percentage of students absent  15 or more days during the school year
+DATA:
+```{r}
+# Read data from the GitHub URL
+demo_chronic <- read_csv(url("https://raw.githubusercontent.com/hslloyd/nevada-school-attendance/main/csvs/demo_all_students.csv"))
+
+# Read data from the GitHub URL
+demo_all <- read_csv(url("https://raw.githubusercontent.com/hslloyd/nevada-school-attendance/main/csvs/demo_ca_students.csv" ))
+```
