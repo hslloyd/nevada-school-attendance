@@ -1,0 +1,243 @@
+---
+title: "code_sample"
+author: "Hannah Lloyd"
+date: "`r format(Sys.time(),'%m/%d/%Y')`"
+output:  
+  html_document: 
+    theme: united 
+  
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Quantitative analysis:
+
+### Install and Load Packages 
+```{r}
+# Install the required packages if not already installed. Change FALSE to TRUE if you need to install these packages.
+if (!require('tidyverse')) install.packages('tm', dependencies=FALSE)
+if (!require('readr')) install.packages('tidytext', dependencies=FALSE)
+
+library(tidyverse)
+library(readr) 
+library(tidyr)
+library(broom)
+```
+
+### Load Dataset  
+soure of the data: Nevada Report http://nevadareportcard.nv.gov/DI/CivilRightsDataCollection?organization=c2269& 
+Percentage of students absent  15 or more days during the school year
+DATA: 2017-18 Civil Rights Data Collection (CRDC) School Climate Data
+```{r}
+#rdatafiles
+# Specify the GitHub raw data URL
+github_url <- "https://raw.githubusercontent.com/hslloyd/nevada-school-attendance/main/county_absentee_rates.csv"
+
+# Read data from the GitHub URL
+df <- read_csv(url(github_url))
+```
+quality control
+```{r}
+# Display summary statistics
+summary(df)
+```
+
+### data transformation
+
+```{r}
+# Reshape the data from wide to long 
+#df prior: XX rows, XX columns
+melted_df <- gather(
+  df,
+  key = "Demographics",
+  value = "Percentage",
+  -c(LEA_NAME, SCHID, SCH_NAME)
+)
+#df after: XX rows and XX colums 
+```
+
+
+```{r}
+# Check for missing values
+missing_values <- colSums(is.na(melted_df))
+missing_values
+
+# check unique value types 
+demographics_options<- melted_df%>%distinct(Demographics) 
+
+print(demographics_options) 
+
+#create new variable identifying the demographic variable type based on
+melted_df <- melted_df %>%
+  mutate(demographics_type = case_when(
+    Demographics %in% c("American Indian/Alaskan Native", "Asian", "Black", "Hispanic", "Two or more races", "Native Hawaiian or other Pacific Islander", "White") ~ "race",
+    Demographics %in% c("Male", "Female") ~ "sex",
+    TRUE ~ "Other"
+  ))
+```
+```{r}
+# Convert Percentage column to numeric (removing % sign)
+melted_df$Percentage <- as.numeric(gsub("%", "", melted_df$Percentage))
+
+#take out the word "school district" in the lea variable
+melted_df$LEA_NAME <- gsub(" SCHOOL DISTRICT", "", melted_df$LEA_NAME)
+
+
+melted_df<- melted_df%>% 
+  filter(demographics_type != "Other" & !is.na(Percentage))%>% #filter out other 
+  group_by(SCHID, demographics_type)%>%
+  mutate(sum = sum(Percentage),
+proportion = Percentage/sum * 100) %>%
+  mutate(sum_2 = sum(proportion), difference = abs(proportion - Percentage))%>%
+  ungroup()
+
+
+```
+
+this is likely due to a rounding error in the aggregated dataset, normally I would backtrack to the original dataset, but since I don't have access to it, i will normalized the numbers I have.
+
+We see that the change is not that difference
+```{r}
+unique(melted_df$sum_2)
+range(melted_df$difference)
+```
+Distribution of percentage 
+```{r}
+# Plot the distribution of proportion
+melted_df%>%filter(demographics_type != "race")%>%
+  ggplot( aes(x=proportion, fill=Demographics)) +
+  geom_density(alpha=0.5) +
+  facet_wrap(~demographics_type, scales='free') +  # Facet by demographic type
+  ggtitle('Density') +
+  xlab('proportion') +
+  ylab('Density') +
+  theme_minimal()
+
+# Define the color palette
+color_palette <- c("#d53e4f", "#fc8d59", "#fee08b", "#ffffbf", "#e6f598", "#99d594", "#3288bd")
+
+# Density Plot
+melted_df %>%
+  filter(demographics_type == "race") %>%
+  ggplot(aes(x = proportion, fill = Demographics)) +
+  geom_density(alpha = 0.5) +
+  facet_wrap(~ Demographics, scales = 'fixed', labeller = label_bquote(cols = .(Demographics))) +
+  xlab('Percentage') +
+  ylab('Density') +
+  scale_fill_manual(values = color_palette) +  # Set color palette
+  theme_minimal() +
+  theme(
+    strip.text = element_text(size = 10),
+    legend.position = 'none'
+  )
+
+# Normalized Bar Chart
+melted_df %>%
+  filter(demographics_type == "race") %>%
+  ggplot(aes(x = LEA_NAME, y = proportion, fill = Demographics)) +
+  geom_bar(stat = "identity", position = "fill") +
+  labs(title = "Normalized Bar Chart",
+       x = "School District",
+       y = "Proportion") +
+  scale_fill_manual(values = color_palette) +  # Set color palette
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+cont<-race_df%>%
+  group_by(LEA_NAME, Demographics)%>%
+  mutate(mean_l_d = mean(proportion))
+                                                                                 
+                                                                                 mean(race_df%>%filter(Demographics == "White" & LEA_NAME == "Achievement")%proportion)
+```
+anova
+```{r}
+aov_result<-aov(proportion ~ Demographics, data = melted_df%>%filter(demographics_type == "sex"))
+summary(aov_result)
+```
+
+chisquare test 
+```{r}
+# Filter out missing values and convert Percentage to numeric
+melted_df <- melted_df %>%
+  filter(!is.na(proportion) & demographics_type == "race")
+# Create a contingency table
+contingency_table <- table(melted_df$Demographics, cut(melted_df$proportion, breaks = c(0, 1, 2, 3, 4, 5, Inf)))
+
+# Perform the chi-squared test
+chi_squared_result <- chisq.test(contingency_table)
+
+str(contingency_table)
+
+###
+
+race_df<- melted_df%>%filter(demographics_type == "race")
+
+```
+
+Given that the p-value is extremely small (less than 0.05, or any conventional significance level), you would typically reject the null hypothesis. In the context of the chi-squared test of independence, this suggests that there is a significant association between the demographic groups and absentee rates.
+
+In practical terms, this means that there is evidence to suggest that the absentee rates are not the same across different demographic groups.
+
+It's important to note that while the test indicates statistical significance, further analysis may be needed to understand the nature of the association. Post-hoc tests or additional exploratory analyses may provide insights into which demographic groups differ significantly in terms of absentee rates.
+
+
+
+chisquare test 
+```{r}
+# Filter out missing values and convert Percentage to numeric
+melted_df <- melted_df %>%
+  filter(!is.na(proportion) & demographics_type == "sex")
+# Create a contingency table
+contingency_table_sex <- table(melted_df$Demographics, cut(melted_df$proportion, breaks = c(0, 1, 2, 3, 4, 5, Inf)))
+
+# Perform the chi-squared test
+chi_squared_result <- chisq.test(contingency_table_sex)
+
+str(contingency_table_sex)
+```
+
+Demographics Distribution 
+
+```{r}
+# Plot the distribution of Demographics
+ggplot(melted_df, aes(x = Demographics)) +
+  geom_bar(fill = "skyblue", color = "black") +
+  labs(title = "Demographics Distribution", x = "Demographics", y = "Count") +
+  theme_minimal()
+
+```
+
+```{r}
+ggplot(melted_df, aes(x = LEA_NAME, y = proportion, fill = Demographics)) +
+  geom_bar(stat = "identity", position = "fill") +
+  scale_y_continuous(labels = scales::percent_format(scale = 1), limits = c(0, 1)) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+```
+
+```{r}
+ggplot(melted_df, aes(x = proportion, color = Demographics)) +
+  geom_density() +
+  theme_minimal() +
+  labs(x = "Percentage", y = "Density", color = "Demographic") +
+  theme(legend.position = "top")
+```
+
+
+
+# Text analysis:
+
+### Load Packages 
+Step 1: Install and Load Required Packages
+```{r}
+# Install the required packages if not already installed
+if (!require('tm')) install.packages('tm', dependencies=TRUE)
+if (!require('tidytext')) install.packages('tidytext', dependencies=TRUE)
+
+# Load the packages
+library(tm)
+library(tidytext)
+``
