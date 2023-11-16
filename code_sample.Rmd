@@ -1,0 +1,186 @@
+---
+title: "Chronic Absence in Nevada Schools"
+author: "Hannah Lloyd"
+date: "`r format(Sys.time(), '%m/%d/%Y')`"
+output:  
+  pdf_document: 
+#    theme: united  
+    toc: true
+---
+
+# Overview 
+This analysis explores chronic absence among students in Nevada schools. 
+
+Chronic absence is defined by being absent for 15 or more days during the school year. During the COVID-19 pandemic (2020-2023) chronic absence rates increased.  This analyses aims to explore how segmenting at the County Level can inform targeted interventions.
+
+
+### RMD Setup and Package Installation
+
+```{r setup, include=TRUE, message=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+
+# Install and load the required packages
+if (!require('tidyverse')) install.packages('tidyverse', dependencies=FALSE)
+if (!require('readr')) install.packages('readr', dependencies=FALSE)
+
+library(tidyverse)
+library(readr) 
+```
+
+#### Global Variables and Vectors
+```{r}
+# These are the variables related to race in these datasets
+race_variables <- c("American Indian/Alaskan Native", "Asian", "Black", "Hispanic", "Two or More races","Two or More Races", "Pacific Islander", "White") 
+
+#define the color palette
+color_palette <- c("#9e0142", "#f46d43", "#fdae61", "#fee08b",  "#66c2a5", "#3288bd", "#5e4fa2")
+```
+
+# Data Loading and Cleaning
+
+- All of the data is sourced from [Nevada Report Card](http://nevadareportcard.nv.gov/di/). 
+- Two CSVs are sourced from [this github repo](https://github.com/hslloyd/nevada-school-attendance)  
+  1. The first csv contains the reported demographics of all of the students at the school district level in Nevada
+  2. The second csv contains all of the reported demographics of the *chronically absent* students at the school district level in Nevada
+
+```{r}
+# Read data from GitHub URLs 
+# This csv contains all of the reported demographics of all of the students at the school district level in Nevada
+demo_all <- read_csv(url("https://raw.githubusercontent.com/hslloyd/nevada-school-attendance/main/csvs/demo_all_students.csv"))
+
+# This csv contains all of the reported demographics of the chronically absent students at the school district level in Nevada
+demo_chronic <- read_csv(url("https://raw.githubusercontent.com/hslloyd/nevada-school-attendance/main/csvs/demo_ca_students.csv" ))
+```
+
+### Cleaning the datasets
+```{r}
+# Clean variable names to be able to merge the dataframes
+names(demo_chronic) <- sub("Chronicabsenteeism - |Chronic Absenteeism  - |Chronic Absenteeism - ","", names(demo_chronic))
+names(demo_all) <- sub(" % ","", names(demo_chronic))
+
+# Convert character values to numeric
+demo_all <- demo_all %>%
+  mutate_at(vars(starts_with(colnames(demo_all)[5:length(colnames(demo_all))])), as.numeric)
+
+demo_chronic <- demo_chronic %>%
+  mutate_at(vars(starts_with(colnames(demo_chronic)[5:length(colnames(demo_chronic))])), as.numeric)
+
+# Pivot data to long format for both dataframes
+demo_all <- demo_all %>%
+  pivot_longer(cols = c(starts_with(colnames(demo_all)[6:length(colnames(demo_all))])), names_to = 'demographic', values_to = 'percentage') %>%
+  mutate(chronic_absence = "n")
+
+demo_chronic <- demo_chronic %>%
+  pivot_longer(cols = c(starts_with(colnames(demo_chronic)[6:length(colnames(demo_chronic))])), names_to = 'demographic', values_to = 'percentage') %>%
+  mutate(chronic_absence = "y")
+
+# Combine dataframes to one long
+demo_combined <- rbind(demo_chronic, demo_all)
+
+# Replace NAs with 0s 
+demo_combined <- demo_combined %>% 
+  mutate(percentage = replace(percentage, is.na(percentage), 0)) %>% 
+  filter(`Accountability Year`=='2022-2023')
+```
+
+The demographic percentage values in the dataframes do not consistently sum up to 100% when aggregated at the school district level. To address this, a new variable `percentage_norm` is introduced to normalize the percentage values by dividing them by the total sum of the demographics within a given school district. This normalization enables future analyses.
+
+```{r}
+demo_combined <- demo_combined %>%
+  mutate(demographics_type = case_when(
+    demographic %in% race_variables ~ "race",
+    TRUE ~ "other"
+  )) %>%
+  group_by(Name, demographics_type, chronic_absence) %>%
+  mutate(sum = sum(percentage),
+         percentage_norm = percentage/sum * 100) %>%
+  mutate(sum_2 = sum(percentage_norm), difference = abs(percentage_norm - percentage)) %>%
+  ungroup()
+```
+
+# Data Exploration and Visualization
+
+How does the chronic absence distribution and the entire distribution of students differ vary based on demographics?
+```{r}
+# Plot density
+demo_combined%>%filter(demographics_type == "race")%>%
+  ggplot( aes(x=percentage_norm, fill=chronic_absence)) +
+  geom_density(alpha=0.4) +
+  facet_wrap(~demographics_type, scales='free') +  # Facet by demographic type
+  ggtitle('Density of student percentage by demographic and student sample') +
+  xlab('percentage of student population') +
+  ylab('Density') +
+  theme_minimal()+
+  facet_wrap(~demographic)+
+  labs(fill = "Student Population") +
+  scale_fill_manual(
+    values = c("y" = "#d8b365", "n" = "#5ab4ac"),  # Set custom colors
+    breaks = c("y", "n"),  # Specify breaks
+    labels = c( "Chronically Absent", "Entire")  # Specify labels
+  )
+```
+What is the normalized proportion distribution of demographic groups among students with chronic absence at the school district level, as depicted in the normalized stacked bar chart?
+
+```{r}
+# Plot demographics of students with chronic absence
+demo_combined %>%
+  filter(chronic_absence == "y" & demographics_type == "race")%>%
+  ggplot(aes(x = Name, y = percentage_norm, fill = demographic)) +
+  geom_bar(stat = "identity", position = "fill") +
+  labs( title = "",
+    subtitle = "Normalized demographic distribution among chronically absent students in nevada",
+       x = "School District",
+       y = "Proportion") + 
+  scale_fill_manual(values = color_palette) +  # Set color palette
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+After examining the breakdown of demographic distribution at the school district level, how does this compare to the expected school district's demographic distribution? What is the normalized proportion distribution of demographic groups among all students in Nevada at the school district level?
+
+```{r}
+# Plot demographics for all students in each county
+demo_combined %>%
+  filter(chronic_absence == "n")%>%
+  ggplot(aes(x = Name, y = percentage_norm, fill = demographic)) +
+  geom_bar(stat = "identity", position = "fill") +
+  labs(title = "",
+       subtitle = "Normalized demographic distribution among all students in Nevada",
+       x = "School District",
+       y = "Proportion") + 
+  scale_fill_manual(values = color_palette) +  # Set color palette
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+# Statistical Tests
+
+Since schools and districts might vary in how they understand and respond to their chronically absent students situation, it is important to test whether the demographics of their chronically absent students is different than their entire student population. 
+
+### Carson City 
+Here, I am constructing a contingency table that represents each row as a sample. One row corresponds to chronically absent students, while the other row represents the entire student population of the *Carson City* school district. The columns of the table represent demographic variables, and the values within the table cells are the normalized proportions of students belonging to each demographic category for the respective samples. 
+
+```{r}
+# create contingency table
+carson_city_cont <- demo_combined %>%
+  filter(Name == "Carson City" & demographics_type == "race") %>%
+  select(-c(`Accountability Year`, `Organization Code`, `District/Authority Name`, `All Students`, demographics_type, Name, percentage, sum, sum_2, difference)) %>%
+  spread(demographic, percentage_norm) %>%
+  distinct()
+```
+
+Now to perform the chi-square statistical test
+```{r}
+# Perform chi-square test
+chisq_result_carson <- chisq.test(carson_city_cont[-1])
+
+# Print the chi-square test result
+print(chisq_result_carson)
+```
+
+`X-squared = 86.331, df = 6, p-value < 2.2e-16`
+
+The chi-squared statistic `X-squared` is 86.331, indicating a significant association.
+The degrees of freedom (df) are 6, representing the number of categories minus 1.
+The p-value < 0.001, suggesting strong evidence to reject the null hypothesis of no association.
+This suggests that there is a relationship between chronic absence and demographic categories. Further investigation into specific demographic categories with large differences between observed and expected counts can provide insights into the nature of this association.
